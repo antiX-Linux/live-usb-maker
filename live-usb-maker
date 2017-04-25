@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.00.03"
- VERSION_DATE="Sat Apr 22 15:44:04 MDT 2017"
+      VERSION="2.00.04"
+ VERSION_DATE="Mon Apr 24 11:53:13 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -50,7 +50,7 @@ test -d "$domain_dir" && export TEXTDOMAINDIR=$domain_dir
  CLONE_BDIR_FILES="{vmlinuz,vmlinuz1,initrd.gz,linuxfs}{,.md5}"
 
        UEFI_FILES="EFI boot/{grub,uefi-mt}"
-       BIOS_FILES="boot/{syslinux,memtest} antiX/{vmlinuz,initrd}*"
+       BIOS_FILES="EFI boot/{syslinux,grub,memtest} antiX/{vmlinuz,initrd}*"
 
         GRUB_CONF="boot/grub/grub.cfg"
            CHEATS=""
@@ -196,6 +196,7 @@ eval_argument() {
     local arg=$1  val=$2
         case $arg in
          -bios-size|b)  BIOS_SIZE=$val                   ;;
+         -bios-size=*)  BIOS_SIZE=$val                   ;;
              -cheat|c)  CHEATS="$CHEATS${CHEATS:+ }$val" ;;
              -cheat=*)  CHEATS="$CHEATS${CHEATS:+ }$val" ;;
              -color|C)  COLOR_SCHEME=$val                ;;
@@ -488,6 +489,7 @@ main() {
         "The device %s does not seem to be usb or removeable."  "$target_dev"
 
     local alloc_size main_size
+
     need_q partition && verify_sizes alloc_size main_size bios_size "$target_dev" \
         "$ISO_DIR" "$percent_size" "$UEFI_SIZE" "$BIOS_SIZE" "${DEFAULT_SIZE%%%}"
 
@@ -517,7 +519,10 @@ main() {
 
     START_T=$(date +%s)
 
-    need partition && do_partition "$target_dev" "$MSDOS_GPT" "$BIOS_SIZE" "$main_size" "$alloc_size"
+    if need partition; then
+        clear_partition "$target_dev"
+        do_partition "$target_dev" "$MSDOS_GPT" "$BIOS_SIZE" "$main_size" "$alloc_size"
+    fi
 
     sync; sync
 
@@ -535,7 +540,10 @@ main() {
         local phrase_file=$BIOS_DIR/${DEF_BOOT_DIR#/}/$PHRASE_FNAME
         local encrypt_file=$BIOS_DIR/${DEF_BOOT_DIR#/}/$ENCRYPT_FNAME
 
-        [ "$PASS_PHRASE" = "random" ] && PASS_PHRASE=$(random_phrase 30)
+        [ "$PASS_PHRASE" = "random" ] && PASS_PHRASE=$(random_phrase 10)
+
+        msg "Using passphrase %s" "$(pq "$PASS_PHRASE")"
+
         write_phrase_file "$PASS_PHRASE" $phrase_file
         sync
 
@@ -589,7 +597,7 @@ main() {
     local bios_uuid=$(lsblk -no uuid $BIOS_DEV)
     local uefi_uuid=$(lsblk -no uuid $UEFI_DEV)
 
-    need uuids && do_uuids $BIOS_DIR "$bios_uuid" "$UEFI_DIR/$GRUB_CONF" "$uefi_uuid"
+    need uuids && do_uuids $BIOS_DIR "$bios_uuid" "$UEFI_DIR/$GRUB_CONF" "$uefi_uuid" "$UEFI_PART"
 
     [ ${#cheats} -gt 0 ] && need cheats-syslinux && do_cheats_syslinux $BIOS_DIR "$cheats"
     [ ${#cheats} -gt 0 ] && need cheats-grub     && do_cheats_grub     $UEFI_DIR "$cheats"
@@ -706,7 +714,8 @@ verify_sizes() {
     local percent=${cmd_percent:-$default_size}
 
     # Get total size of target live-usb device
-    local total_size=$(parted --script $dev unit MiB print | sed -rn "s/^Disk.*: ([0-9]+)MiB$/\1/p")
+    local total_size=$(parted --script $target_dev unit MiB print 2>/dev/null | sed -rn "s/^Disk.*: ([0-9]+)MiB$/\1/p")
+
     local main_needed=$(du_ap_size_spec $dir "*")
     local uefi_needed=$(du_ap_size_spec $dir "$UEFI_FILES")
     local bios_needed=$(du_ap_size_spec $dir "$BIOS_FILES")
@@ -830,12 +839,14 @@ setup_devices() {
     local drive=$1
 
     if encrypt; then
+        UEFI_PART=3
+
         # Get first three partitions (lexically only)
         BIOS_DEV=$(get_partition $drive 1)
         MAIN_DEV=$(get_partition $drive 2)
         UEFI_DEV=$(get_partition $drive 3)
-
     else
+        UEFI_PART=2
 
         # Get first two partitions (lexically only)
         MAIN_DEV=$(get_partition $drive 1)
@@ -984,6 +995,29 @@ Clone_Bdir_Files
 
 #===== "REAL" WORK STARTS HERE ================================================
 
+
+#------------------------------------------------------------------------------
+# Clear out previous partition tables.
+#------------------------------------------------------------------------------
+clear_partition() {
+    local dev=$1
+    local total=$(parted --script $dev unit KiB print 2>/dev/null | sed -rn "s/^Disk.*: ([0-9]+)kiB$/\1/ip")
+
+    msg "Clear previous partitioning"
+
+    # Clear out previous primary partition table
+    cmd dd if=/dev/zero of=$dev bs=1K count=17
+
+    # Clear out sneaky iso-hybrid partition table
+    cmd dd if=/dev/zero of=$dev bs=1K count=17 seek=32
+
+    [ -n "$total" ] || return
+    local offset=$((total - 17))
+
+    # Clear out secondary gpt partition table
+    cmd dd conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
+}
+
 #------------------------------------------------------------------------------
 # Partition the target usb device.  Will make either 3 or 2 partitions
 # depending on whether encryption is used as signaled by the zero size of the
@@ -1002,9 +1036,6 @@ do_partition() {
 
     # Using <gpt|msdos> partitioning
     msg $"Using %s partitioning" $(pq $type)
-
-    # Clear out previous partition table (darned "dd" live-usbs)
-    cmd dd if=/dev/zero of=$drive count=1 bs=512
 
     local preamb="parted --script --align optimal $target_dev unit MiB"
     cmd $preamb mklabel $type || fatal $"Partitioning failed"
@@ -1212,7 +1243,7 @@ do_cheats_grub() {
 # user to be amble to save their  boot parameter selections.
 #------------------------------------------------------------------------------
 do_uuids() {
-    local bios_dir=$1  bios_uuid=$2  grub_cfg=$3  uefi_uuid=$4
+    local bios_dir=$1  bios_uuid=$2  grub_cfg=$3  uefi_uuid=$4  uefi_part=$5
     if [ ${#uefi_uuid} -gt 0 ]; then
         local uefi_file=$bios_dir/antiX/esp-uuid
         cmd mkdir -p $(dirname $uefi_file) || fatal $"Making directory '%s' failed" "$(dirname $uefi_file)"
@@ -1245,6 +1276,10 @@ do_uuids() {
     # Remove #--esp comment to point memtest back to fat32 partition
     cmd sed -ri "s/^#-+esp\s*//" $grub_cfg \
         || fatal "sed on %s failed" "$(basename $grub_cfg)"
+
+    cmd sed -ri "s/(root=\(hd0,)2\)/\1$uefi_part)/" $grub_cfg \
+        || fatal "sed on %s failed" "$(basename $grub_cfg)"
+
 }
 
 #------------------------------------------------------------------------------
