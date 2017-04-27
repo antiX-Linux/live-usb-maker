@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.00.06"
- VERSION_DATE="Wed Apr 26 07:37:32 MDT 2017"
+      VERSION="2.00.08"
+ VERSION_DATE="Wed Apr 26 18:48:34 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -79,8 +79,8 @@ test -d "$domain_dir" && export TEXTDOMAINDIR=$domain_dir
 
     EXT4_NO_64BIT="-O ^64bit"
 
-ORDERED_CMDS="partition makefs makefs-main makefs-bios makefs-uefi copy copy-main copy-bios copy-uefi"
-ORDERED_CMDS="$ORDERED_CMDS uuids cheats cheats-syslinux cheats-grub install"
+ORDERED_CMDS="clear-partition make-partition makefs makefs-main makefs-bios makefs-uefi copy copy-main copy-bios copy-uefi"
+ORDERED_CMDS="$ORDERED_CMDS uuids cheats cheats-syslinux cheats-grub install encrypt-main encryption-initrd"
     ALL_CMDS="sizes all $ORDERED_CMDS"
 
    ALL_FORCE="copy,flock,makefs,umount,usb"
@@ -323,7 +323,7 @@ main() {
        fatal_z "$TARGET"  "No --target was given while in %s mode" gui
     fi
 
-    msg $"Starting %s" "$ME"
+    shout $"Starting %s" "$ME"
     start_log "$orig_args" "$CMDS"
 
     shout_pretend
@@ -379,7 +379,6 @@ main() {
         select_usb_src from "$TARGET"
     fi
 
-    # Ready to make live-usb on device X by <copying|cloning> directory Y
     local from_file from_act=$"copying"
     case $from in
         iso-file|iso|file)
@@ -490,7 +489,8 @@ main() {
 
     local alloc_size main_size
 
-    need_q partition && verify_sizes alloc_size main_size bios_size "$target_dev" \
+    encrypt && shout "\n%s" "Encryption enabled"
+    need_q make-partition && verify_sizes alloc_size main_size bios_size "$target_dev" \
         "$ISO_DIR" "$percent_size" "$UEFI_SIZE" "$BIOS_SIZE" "${DEFAULT_SIZE%%%}"
 
     [ ${#cheats} -gt 0 ] && msg "Cheats: %s" "$(pq $cheats)"
@@ -500,15 +500,16 @@ main() {
     # Make sure the target is not in use
     umount_all $target_dev
 
+    local encrypted_lab=""
+    encrypt && encrypted_lab="$(bqq "encrypted") "
+
     local new_line=$(printf "$nc_co\n$quest_co...")
     # Ready to make live-usb on device X by <cloning|copying directory Y>
-    local final_q=$(quest $"Ready to make live-usb on device %s by %s" \
+    local final_q=$(quest $"Ready to make %s on device %s by %s" "${encrypted_lab}$(pqq live-usb)" \
         "$(pqq ${target_dev##*/})$new_line" "$from_act $from_thing $(pqq $from_value)")
 
     [ "$CMDS" != "all" ] \
         && final_q=$(printf "Ready to perform %s action(s) on %s" "$(pq $CMDS)" "$(pqq ${target_dev##*/})")
-
-    encrypt && shout "\n===> %s <===" "Encrypted live-usb"
 
     if q_mode gui; then
         msg "$final_q"
@@ -519,10 +520,8 @@ main() {
 
     START_T=$(date +%s)
 
-    if need partition; then
-        clear_partition "$target_dev"
-        do_partition "$target_dev" "$MSDOS_GPT" "$BIOS_SIZE" "$main_size" "$alloc_size"
-    fi
+    need clear-partition && clear_partition "$target_dev"
+    need make-partition  && do_partition "$target_dev" "$MSDOS_GPT" "$BIOS_SIZE" "$main_size" "$alloc_size"
 
     sync; sync
 
@@ -532,7 +531,7 @@ main() {
     cmd wait_for_file "$UEFI_DEV"
     need makefs-uefi && do_makefs_uefi $UEFI_DEV
 
-    if encrypt && need makefs-main; then
+    if need encrypt-main; then
         wait_for_file "$MAIN_DEV"
 
         # Write phrase and signal file *before* encrypting
@@ -548,7 +547,8 @@ main() {
         sync
 
         encrypt_partition $MAIN_DEV "$LUKS_NAME" $phrase_file
-        do_makefs_ext "$LUKS_DEV" "$EXT4_OPTIONS"
+
+        need makefs-main && do_makefs_ext "$LUKS_DEV" "$EXT4_OPTIONS"
 
         local main_uuid=$(lsblk -no uuid $MAIN_DEV)
         cmd write_file $encrypt_file "$main_uuid"
@@ -557,12 +557,10 @@ main() {
 
         DID_ENCRYPT=true
 
-        umount $BIOS_DEV # FIXME???
+        umount $BIOS_DEV
         my_mount $LUKS_DEV $MAIN_DIR
 
     fi
-
-    # FIXME: check to see if we partitioned.  If not, figure out if encrypted or not and so on.
 
     [ -z "$DID_PARTITION" ] && guess_partitioning $target_dev
 
@@ -574,11 +572,7 @@ main() {
     local mp_list="$BIOS_DIR $UEFI_DIR"
     encrypt && mp_list="$BIOS_DIR $MAIN_DIR $UEFI_DIR"
 
-    if [ "$QUIET" ]; then
-        (echo; df -PTh $mp_list; echo) >> $LOG_FILE
-    else
-        (echo; df -PTh $mp_list; echo) | tee -a $LOG_FILE | sed -r "s/^(Filesystem.*)/$m_co\1$nc_co/"
-    fi
+    display_df_output $mp_list
 
     if encrypt && need copy-bios; then
         copy_files_spec $ISO_DIR "$BIOS_FILES" "$BIOS_DIR" bios
@@ -587,8 +581,9 @@ main() {
         local linuxfs_full=$ISO_DIR/${DEF_BOOT_DIR#/}/$LINUXFS_NAME
         my_mount "$linuxfs_full" "$LINUX_DIR" -t squashfs -o loop,ro
 
-        enable_initrd_encryption "$INITRD_FILE" "$BIOS_DIR/$DEF_BOOT_DIR/initrd.gz" \
-            "$INITRD_DIR" "$LINUX_DIR" "$LINUX_DIR"
+        need encryption-initrd \
+            && enable_initrd_encryption "$INITRD_FILE" \
+            "$BIOS_DIR/$DEF_BOOT_DIR/initrd.gz" "$INITRD_DIR" "$LINUX_DIR" "$LINUX_DIR"
 
         umount $LINUX_DIR ; rmdir $LINUX_DIR
     fi
@@ -611,7 +606,9 @@ main() {
 
     sync; sync
 
-    msg "=> %s" $"done"
+    display_df_output $mp_list
+
+    msg '%s %s' "$(bq "=>")" $"done"
 
     [ -n "$DID_ENCRYPT" ] && shout "You will be asked to create your own passphrase on the first boot"
 
@@ -651,7 +648,7 @@ check_from() {
 #------------------------------------------------------------------------------
 overall_mode_menu() {
     local fmt="%s$P_IFS%s\n"
-    printf "$fmt" simple  $"Make a full-featured live-usb"
+    encrypt || printf "$fmt" simple  $"Make a full-featured live-usb"
     printf "$fmt" encrypt $"Make an encrypted full-featured live-usb"
     printf "$fmt" default $"Make a customized live-usb"
     printf "$fmt" uuids   $"Update UUIDS on existing live-usb"
@@ -864,6 +861,18 @@ setup_devices() {
 }
 
 #------------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------------
+display_df_output() {
+
+    if [ "$QUIET" ]; then
+        (echo; df -PTh "$@"; echo) >> $LOG_FILE
+    else
+        (echo; df -PTh "$@"; echo) | tee -a $LOG_FILE | sed -r "s/^(Filesystem.*)/$m_co\1$nc_co/"
+    fi
+}
+
+#------------------------------------------------------------------------------
 # Write the passphrase to the passphrase file.  The write_file() routine would
 # leave the passphrase in the log file.
 #------------------------------------------------------------------------------
@@ -1006,8 +1015,6 @@ clear_partition() {
     local dev=$1
     local total=$(parted --script $dev unit KiB print 2>/dev/null | sed -rn "s/^Disk.*: ([0-9]+)kiB$/\1/ip")
 
-    msg "Clear previous partitioning"
-
     # Clear out previous primary partition table
     cmd dd if=/dev/zero of=$dev bs=1K count=17
 
@@ -1106,21 +1113,23 @@ do_makefs_uefi() {
 # Copy from mounted source (or the clone) to the ext4 partition
 #------------------------------------------------------------------------------
 do_copy_main() {
-    local iso_dir=$1  main_dir=$2
+    local iso_dir=$1  main_dir=$2  files="*"
 
     if test -d $main_dir/antiX && ! force copy; then
         pwarn "Not over-writing %s partition due to existing %s directory" ext antiX/
         pwarn "Use %s to overwrite" "--force=copy"
         return
     fi
+
     local err_msg=$"Error while copying files to live usb"
 
-    msg $"Copying files ..."
+    msg "copy files from %s to %s partition" "$(pq $(basename $iso_dir))" "$(pq $(basename $main_dir))"
+    msg "files: %s" "$(pq "$files")"
 
     if q_mode gui || [ "$NO_PROGRESS_BAR" ]; then
-        cmd cp -a $iso_dir/* $main_dir/ || fatal "$err_msg"
+        cmd cp -a $iso_dir/$files $main_dir/ || fatal "$err_msg"
     else
-        [ -z "$PRETEND" ] && prog_copy $iso_dir $main_dir "$err_msg"
+        [ -z "$PRETEND" ] && prog_copy "$iso_dir" "$main_dir" "$err_msg"
     fi
 
     sync
@@ -1134,9 +1143,11 @@ copy_files_spec() {
     local src=$1  spec=$2  targ=$3  type=${4:-unknown}
     local file from dir
 
-    test -z "$spec" && fatal "Missing list of files to copy to %s" "$(pqw $src)"
+    test -z "$spec" && fatal "Missing list of files to copy to %s" "$(pqw $targ)"
 
-    msg "copy <%s> files from %s to %s" "$(pq $spec)" "$(pq $(basename $src))" "$(pq $(basename $targ))"
+    msg "copy files from %s to %s partition" "$(pq $(basename $src))" "$(pq $(basename $targ))"
+    msg "files: %s" "$(pq $spec)"
+
     while read file; do
         test -z "$file" && continue
         dir=$targ/$(dirname $file)
@@ -1162,7 +1173,7 @@ enable_initrd_encryption() {
 
     local prog full
     for prog in $CRYPT_PROGS; do
-        msg "Add program %s to initrd" "$(pq $prog)"
+        msg "Add program %s to %s" "$(pq $prog)" "$(pq initrd)"
         full=$(find_bin $mod_dir $prog)
         [ -n "$full" ] || fatal "Could not find program %s to include in initrd" $prog
         cmd cp $mod_dir$full $dir/bin/
