@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.02.07"
- VERSION_DATE="Tue May  2 04:08:41 MDT 2017"
+      VERSION="2.02.08"
+ VERSION_DATE="Tue May  2 12:08:54 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -360,6 +360,7 @@ main() {
     MNT_DIR=$WORK_DIR/live-dev
 
     mkdir $ISO_DIR $BIOS_DIR $MAIN_DIR $UEFI_DIR || fatal "Could not make %s subdirectories" "$WORK_DIR"
+    echo $$ > $WORK_DIR/pid
 
     #--- Find live boot device if we are running live
 
@@ -1268,7 +1269,7 @@ fix_uefi_memtest() {
     local dir=$1/EFI/BOOT
     test -d "$dir" || dir=$1/efi/boot
     test -d "$dir" || return
-    msg "Fixing uefi memtest bug"
+    msg "Fix uefi memtest bug"
     local fallback=$dir/fallback.efi
     local grubx64=$dir/grubx64.efi
 
@@ -1663,6 +1664,7 @@ clean_up() {
     # Try to umount everything
     umount_work_dir
 
+    rm -f $WORK_DIR/pid
     test -d $WORK_DIR && rmdir $WORK_DIR
 
     luks_close $LUKS_NAME
