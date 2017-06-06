@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.02.13"
- VERSION_DATE="Sat May 20 03:54:11 MDT 2017"
+      VERSION="2.02.15"
+ VERSION_DATE="Tue Jun  6 09:52:32 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -561,6 +561,9 @@ main() {
 
     sync; sync
 
+    # Nothing else makes sense if there is no partition table
+    need_q partition-clear && ! need_q partition-make && exit_done
+
     cmd wait_for_file "$BIOS_DEV"
     need makefs-bios && do_makefs_ext "$BIOS_DEV" "$EXT4_OPTIONS" "$BIOS_LABEL"
 
@@ -647,7 +650,7 @@ main() {
 
     need_q copy && display_df_output $mp_list
 
-    msg "$(bq "=>") %s" $"done"
+    say_done
 
     [ -n "$DID_ENCRYPT" ] && shout $"You will be asked to create your own passphrase on the first boot"
 
@@ -686,13 +689,12 @@ check_from() {
 # Pretty much WYSIWYG
 #------------------------------------------------------------------------------
 overall_mode_menu() {
-    local fmt="%s$P_IFS%s\n"
-    encrypt || printf "$fmt" simple  $"Make a full-featured live-usb"
-    printf "$fmt" encrypt $"Make an encrypted full-featured live-usb"
-    printf "$fmt" default $"Make a customized live-usb (includes encryption option)"
-    printf "$fmt" uuids   $"Update UUIDS on an existing live-usb"
-    printf "$fmt" cheats  $"Update boot parameters on an existing live-usb"
-    printf "$fmt" install $"Reinstall legacy bootloader on an existing live-usb"
+    encrypt || menu_printf simple  $"Make a full-featured live-usb"
+    menu_printf encrypt $"Make an encrypted full-featured live-usb"
+    menu_printf default $"Make a customized live-usb (includes encryption option)"
+    menu_printf uuids   $"Update UUIDS on an existing live-usb"
+    menu_printf cheats  $"Update boot parameters on an existing live-usb"
+    menu_printf install $"Reinstall legacy bootloader on an existing live-usb"
 }
 
 #------------------------------------------------------------------------------
@@ -1104,6 +1106,9 @@ clear_partition() {
 
     # Clear out secondary gpt partition table
     cmd dd conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
+
+    # Tell kernel the partition table has changed
+    cmd partprobe $dev
 }
 
 #------------------------------------------------------------------------------
@@ -1143,6 +1148,13 @@ do_partition() {
     cmd $preamb mkpart primary $main_fs $main_start  $main_end || fatal "$err_msg" main
     cmd $preamb mkpart primary fat32 $main_end $alloc_size     || fatal "$err_msg" uefi
     cmd $preamb set 1 $boot_flag on set $uefi_part esp on      || fatal "$err_msg" flags
+
+    if [ "$type" = 'gpt' ]; then
+        cmd $preamb disk_set pmbr_boot on || fatal "$err_msg" disk_set
+    fi
+
+    # Tell kernel the partition table has changed
+    cmd partprobe $drive
 
     DID_PARTITION=true
 }
@@ -1554,6 +1566,20 @@ check_size() {
     [ $extra -lt 0 ]       && $action $"Not enough space on %s partition" "$type"
     [ $extra -lt $margin ] && $action $"Less than %s MiB would remain on %s partition" "$margin" "$type"
 }
+
+
+#------------------------------------------------------------------------------
+# Tell user we are done and then exit
+#------------------------------------------------------------------------------
+exit_done() {
+    say_done
+    my_exit
+}
+
+#------------------------------------------------------------------------------
+# Tell user that we're done
+#------------------------------------------------------------------------------
+say_done() { msg "$(bq "=>") %s" $"done" ; }
 
 #------------------------------------------------------------------------------
 # A catch-all for things to be done right before exiting
