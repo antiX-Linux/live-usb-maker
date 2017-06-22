@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.03.05"
- VERSION_DATE="Tue Jun 20 03:25:08 MDT 2017"
+      VERSION="2.03.07"
+ VERSION_DATE="Thu Jun 22 12:53:28 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -404,7 +404,7 @@ main() {
     INITRD_DIR=$WORK_DIR/initrd
     LINUX_DIR=$WORK_DIR/linux
     MNT_DIR=$WORK_DIR/live-dev
-    WORD_FILE=$WORK_DIR/words
+    WORDS_FILE=$WORK_DIR/words
 
     mkdir $ISO_DIR $BIOS_DIR $MAIN_DIR $UEFI_DIR || fatal "Could not make %s subdirectories" "$WORK_DIR"
     echo $$ > $WORK_DIR/pid
@@ -582,7 +582,7 @@ main() {
 
         test -r "$PP_WORDS_FILE" || PP_WORDS_FILE=$BACKUP_WORDS_FILE
 
-        encrypt && select_passphrase_type PASS_PHRASE_TYPE
+        select_passphrase_type PASS_PHRASE_TYPE
     fi
     #=========================================================================
 
@@ -756,14 +756,20 @@ select_passphrase_type() {
 
     shout
 
-    local have_words dict_size dict_bits
-    if test -r $PP_WORDS_FILE; then
-        dict_size=$(dict_size)
+    local have_words dict_size=0 dict_bits=0
+    test -r $PP_WORDS_FILE && dict_size=$(dict_size)
+
+    if [ $dict_size -eq 0 ]; then
+        warn "no words were found in the dictionary"
+        warn "Will not generate passphrases"
+
+    elif [ $dict_size -lt 5000 ]; then
+        warn "only %s words were found in the dictionary" "$(nq $dict_size)"
+        warn "Will not generate passphrases"
+
+    else
         dict_bits=$(x1 "log($dict_size)/log(2)")
         have_words=true
-    else
-        warn "Could not find words file %s" "$PP_WORDS_FILE"
-        warn "Will not generate passphrases"
     fi
 
     # Don't let these menu entries get into the log file
@@ -904,6 +910,7 @@ say_using_phrase() {
 first_boot_phrase() {
     local var=$1  file=$2
     local _phrase=$(gen_passphrase 2)
+    : ${_phrase:=default-passphrase}
     msg $"Will use initial passphrase %s\n" "$(pq "$_phrase")"
     write_phrase_file "$_phrase" "$file"
     eval $var=file=\$file
@@ -923,7 +930,7 @@ gen_passphrase() {
     # pick N words at random
     # then translate new-line to space
     # then convert final space back to new-line
-    dict_words "$file" "$max_len" | shuf --repeat --random-source=$src -n$nwords \
+    dict_words "$file" "$max_len" | shuf --repeat --random-source=$src -n$nwords 2>/dev/null \
         | tr '\n' ' ' | sed "s/ $/\n/"
 }
 
@@ -939,9 +946,10 @@ dict_size() { dict_words "$@" | wc -l ; }
 dict_words() {
     local file=${1:-$PP_WORDS_FILE}  max_len=${2:-$PP_MAX_WORD_LEN}
 
-    test -e $WORD_FILE || egrep -v -i -e "[^ -~]" -e ".{$((max_len + 1))}" -e "$SWEARS" "$file" -e "'" > $WORD_FILE
+    test -e $WORDS_FILE || grep -P -v "[^ -~]" "$file" \
+        | egrep -v -e ".{$((max_len + 1))}" -e "$SWEARS" -e "'" > $WORDS_FILE
 
-    cat $WORD_FILE
+    cat $WORDS_FILE
 }
 
 #------------------------------------------------------------------------------
