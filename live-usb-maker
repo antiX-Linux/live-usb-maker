@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.04.00"
- VERSION_DATE="Sun Jul  2 13:35:22 MDT 2017"
+      VERSION="2.05.00"
+ VERSION_DATE="Sat Jul  8 23:50:21 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -220,7 +220,7 @@ eval_early_argument() {
 
 eval_argument() {
     local arg=$1  val=$2
-        case $arg in
+    case $arg in
          -bios-size|b)  BIOS_SIZE=$val                   ;;
          -bios-size=*)  BIOS_SIZE=$val                   ;;
              -cheat|c)  CHEATS="$CHEATS${CHEATS:+ }$val" ;;
@@ -436,7 +436,7 @@ main() {
     fi
 
     # FIXME: better error messsage!!
-    encrypt && need_prog grab-libs unpack-initrd cryptsetup dmsetup
+    encrypt && need_prog copy-initrd-programs unpack-initrd cryptsetup dmsetup
 
     local from
 
@@ -674,14 +674,14 @@ main() {
     if encrypt && need copy-bios; then
         copy_files_spec $ISO_DIR "$BIOS_FILES" "$BIOS_DIR" bios
 
-        # Need to get modules out of the linuxfs file (sigh)
-        #local linuxfs_full=$ISO_DIR/$DEF_BOOT_DIR/$LINUXFS_NAME
-        #my_mount "$linuxfs_full" "$LINUX_DIR" -t squashfs -o loop,ro
+        # Need to get programs, libs, and modules, out of the linuxfs file (sigh)
+        local linuxfs_full=$ISO_DIR/$DEF_BOOT_DIR/$LINUXFS_NAME
+        my_mount "$linuxfs_full" "$LINUX_DIR" -t squashfs -o loop,ro
 
-        #need encryption-initrd && enable_initrd_encryption \
-        #    "$INITRD_FILE" "$BIOS_DIR/$DEF_BOOT_DIR/initrd.gz" "$INITRD_DIR" "$LINUX_DIR"
+        need encryption-initrd && enable_initrd_encryption \
+            "$INITRD_FILE" "$BIOS_DIR/$DEF_BOOT_DIR/initrd.gz" "$INITRD_DIR" "$LINUX_DIR"
 
-        #umount $LINUX_DIR ; rmdir $LINUX_DIR
+        umount $LINUX_DIR ; rmdir $LINUX_DIR
     fi
     #=========================================================================
 
@@ -696,11 +696,11 @@ main() {
         write_random_seed $MAIN_DIR/$DEF_BOOT_DIR/$SEED_FNAME
     fi
 
-    if need_q copy-bios || need_q copy-main; then
-        : ${ISO_BOOT_DIR:=$DEF_BOOT_DIR}
-        local initrd_file=${INITRD_FILE:-$ISO_DIR/$ISO_BOOT_DIR/initrd.gz}
-        enable_disable_initrd_encryption "$initrd_file" "$BIOS_DIR/$DEF_BOOT_DIR/initrd.gz" "$INITRD_DIR"
-    fi
+    # if need_q copy-bios || need_q copy-main; then
+    #     : ${ISO_BOOT_DIR:=$DEF_BOOT_DIR}
+    #     local initrd_file=${INITRD_FILE:-$ISO_DIR/$ISO_BOOT_DIR/initrd.gz}
+    #     enable_disable_initrd_encryption "$initrd_file" "$BIOS_DIR/$DEF_BOOT_DIR/initrd.gz" "$INITRD_DIR"
+    # fi
 
     local bios_uuid=$(lsblk -no uuid $BIOS_DEV)
     local uefi_uuid=$(lsblk -no uuid $UEFI_DEV)
@@ -919,7 +919,8 @@ first_boot_phrase() {
     local var=$1  file=$2
     local _phrase=$(gen_passphrase 2)
     : ${_phrase:=default-passphrase}
-    msg $"Will use initial passphrase %s\n" "$(pq "$_phrase")"
+    msg $"Will use initial passphrase %s" "$(pq "$_phrase")"
+    msg
     write_phrase_file "$_phrase" "$file"
     eval $var=file=\$file
     FIRST_BOOT_PHRASE=true
@@ -1012,7 +1013,7 @@ select_target_device() {
     case $cnt in
         0) fatal $"No available target usb devices were found" ;;
         1) dev=$(echo "$menu" | cut -d"$P_IFS" -f1 | head -n1)
-            Msg $"Only one target usb device was found: %s" "$(echo $(echo "$menu" | cut -d"$P_IFS" -f2))"
+            Msg $"Only one target usb device was found %s" "$(echo $(echo "$menu" | cut -d"$P_IFS" -f2))"
            eval $var=\$dev
            return ;;
     esac
@@ -1401,6 +1402,7 @@ clear_partition() {
     # Clear out secondary gpt partition table
     cmd quiet_dd conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
 
+    sleep 1
     # Tell kernel the partition table has changed
     cmd partprobe $dev
 }
@@ -1447,6 +1449,7 @@ do_partition() {
         cmd $preamb disk_set pmbr_boot on || fatal "$err_msg" disk_set
     fi
 
+    sleep 1
     # Tell kernel the partition table has changed
     cmd partprobe $drive
 
@@ -1553,52 +1556,50 @@ Copy_Files_Spec
 }
 
 #------------------------------------------------------------------------------
-# Add cryptsetup and dmsetup to the initrd. NOT USED!
+# Add cryptsetup to the initrd.
 #------------------------------------------------------------------------------
 enable_initrd_encryption() {
     local from_file=${1:-$2}  to_file=$2  dir=${3:-$INITRD_DIR}  mod_dir=$4
 
     test -r "$from_file" || fatal "Could not find initrd file %s" "$(pqw $from_file)"
-    always_cmd unpack-initrd -f "$from_file" -d $dir || fatal "An error occurred unpacking the initrd"
-
-    pause initrd
+    unpack-initrd -f "$from_file" -d $dir || fatal "An error occurred unpacking the initrd"
 
     grep -q cryptsetup $dir/init || fatal "This initrd cannot do encryption"
 
-    local prog full
-    for prog in $CRYPT_PROGS; do
-        msg $"Add program %s to %s" "$(pq $prog)" "$(pq initrd)"
-        full=$(find_bin $mod_dir $prog)
-        [ -n "$full" ] || fatal "Could not find program %s to include in initrd" $prog
-        cmd cp $mod_dir$full $dir/bin/
-        #msg "Copy libs for %s" "$(pq $prog)"
-        cmd grab-libs --output=$dir/lib/ --prefix=$mod_dir $full
-    done
+    copy-initrd-programs --from=$mod_dir --to=$dir --clean
+    copy-initrd-programs --from=$mod_dir --to=$dir --encrypt \
+        || fatal "Was unable to add all required programs to the initrd"
 
-    #-- if [ -n "$mod_dir" ]; then
-    #--     msg "add %s modules to initrd" "$(pq encryption)"
-    #--     cmd copy-initrd-modules --quiet --crypt --from=$mod_dir --to=$dir \
-    #--         || fatal "Kernel modules were not copied.  Do you need to update copy-initrd-modules?"
-    #-- fi
+    # msg "add %s modules to initrd" "$(pq encryption)"
+    # cmd copy-initrd-modules --quiet --crypt --from=$mod_dir --to=$dir \
+    #     || fatal "Kernel modules were not copied.  Do you need to update copy-initrd-modules?"
 
-    cmd unpack-initrd -f $to_file -d $dir --repack || fatal "An error occurred repacking the initrd"
+    local encrypt_file=$dir/etc/encrypt
+    mkdir -p $(dirname $encrypt_file)
+    echo "$ENCRYPT_ENABLE" > $encrypt_file
+
+    pause initrd
+
+    [ "$PRETEND" ] && return
+
+    unpack-initrd -f $to_file -d $dir --repack || fatal "An error occurred repacking the initrd"
     local md5_sum=$(cd $(dirname $to_file) && md5sum $(basename $to_file))
     cmd write_file "$to_file".md5 "$md5_sum"
 }
 
 #------------------------------------------------------------------------------
-# Add or removed /etc/encrypt inside initrd
+# Add or removed /etc/encrypt inside initrd  NO LONGER USED
 #------------------------------------------------------------------------------
 enable_disable_initrd_encryption() {
     local from_file=${1:-$2}  to_file=$2  dir=${3:-$INITRD_DIR}
 
     test -r "$from_file" || fatal "Could not find initrd file %s" "$(pqw $from_file)"
-    always_cmd unpack-initrd -f "$from_file" -d $dir || fatal "An error occurred unpacking the initrd"
+    unpack-initrd -f "$from_file" -d $dir || fatal "An error occurred unpacking the initrd"
 
 
     local encrypt_file=$dir/etc/encrypt
     if encrypt; then
-        test -e $dir/bin/cryptsetup  || fatal "The % program not found in the initrd" cryptsetup
+        test -e $dir/bin/cryptsetup  || fatal "The %s program not found in the initrd" cryptsetup
         grep -q cryptsetup $dir/init || fatal "This initrd cannot do encryption"
 
         msg $"Enable encryption in the live initrd"
@@ -1917,7 +1918,9 @@ exit_done() {
 #------------------------------------------------------------------------------
 # Tell user that we're done
 #------------------------------------------------------------------------------
-say_done() { msg "$(bq "=>") %s" $"done" ; }
+say_done() {
+    msg "$(bq "=>") %s" $"done"
+}
 
 #------------------------------------------------------------------------------
 # A catch-all for things to be done right before exiting
