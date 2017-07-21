@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.10.00"
- VERSION_DATE="Thu Jul 13 11:45:58 MDT 2017"
+      VERSION="2.10.01"
+ VERSION_DATE="Mon Jul 17 19:25:01 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -379,7 +379,7 @@ main() {
        fatal_z "$TARGET"  "No --target was given while in %s mode" gui
     fi
 
-    shout $"Starting %s" "$ME"
+    shout_title $"Starting %s" "$ME"
     start_log "$orig_args" "$CMDS"
 
     # NOTE: this placement is not ideal because it allows the user to
@@ -609,10 +609,10 @@ main() {
     fi
     #=========================================================================
 
-    local new_line=$(printf "$nc_co\n$quest_co...")
+    local new_line=$(printf "$nc_co\n$bold_co...")
     # Ready to make live-usb on device X by <cloning|copying directory Y>
-    local final_q=$(quest $"Ready to make %s on device %s by %s" "${encrypted_lab}$(pqq live-usb)" \
-        "$(pqq ${target_dev##*/})$new_line" "$from_act $from_thing $(pqq $from_value)")
+    local final_q=$(printf $"Ready to make %s on device %s by %s" "${encrypted_lab}$(pqb live-usb)" \
+        "$(pqb ${target_dev##*/})$new_line" "$from_act $from_thing $(pqb $from_value)")
 
     [ "$CMDS" != 'all' ] \
         && final_q=$(printf "Ready to perform %s action(s) on %s" "$(pq $CMDS)" "$(pqq ${target_dev##*/})")
@@ -620,8 +620,10 @@ main() {
     if q_mode gui; then
         msg "$final_q"
     else
-        final_q=$(printf "%s\n%s" "$final_q" "$(quest $"Shall we begin?")")
-        YES_no_pretend "$final_q" || my_exit
+        echo
+        shout_subtitle "$final_q"
+        #final_q=$(printf "%s\n%s" "$final_q" "$(quest $"Shall we begin?")")
+        YES_no_pretend $"Shall we begin?" || my_exit
     fi
 
     [ -n "$BE_VERBOSE" -a -n "$PRETEND_MODE" ] && VERY_VERBOSE=true
@@ -1408,16 +1410,16 @@ clear_partition() {
     local total=$(parted --script $dev unit KiB print 2>/dev/null | sed -rn "s/^Disk.*: ([0-9]+)kiB$/\1/ip")
 
     # Clear out previous primary partition table
-    cmd quiet_dd if=/dev/zero of=$dev bs=1K count=17
+    cmd dd status=none if=/dev/zero of=$dev bs=1K count=17
 
     # Clear out sneaky iso-hybrid partition table
-    cmd quiet_dd if=/dev/zero of=$dev bs=1K count=17 seek=32
+    cmd dd status=none if=/dev/zero of=$dev bs=1K count=17 seek=32
 
     [ -n "$total" ] || return
     local offset=$((total - 17))
 
     # Clear out secondary gpt partition table
-    cmd quiet_dd conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
+    cmd dd status=none conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
 
     sleep 1
     # Tell kernel the partition table has changed
@@ -1808,7 +1810,7 @@ do_install_bootloader() {
     done
 
     [ "$file" ] || fatal "Could not find file %s" "$fname"
-    cmd quiet_dd bs=440 conv=notrunc count=1 if=$file of=$target_dev  || fatal "%s command failed" dd
+    cmd dd status=none bs=440 conv=notrunc count=1 if=$file of=$target_dev  || fatal "%s command failed" dd
 
     local sdir idir syslinux_dir isolinux_dir
     for sdir in boot/syslinux syslinux; do
@@ -1888,7 +1890,7 @@ do_made_by() {
 #------------------------------------------------------------------------------
 write_random_seed() {
     local file=$1
-    cmd quiet_dd if=/dev/urandom of=$file bs=1 count=512
+    cmd dd status=none if=/dev/urandom of=$file bs=1 count=512
     cmd chmod 600 $file
 }
 
@@ -1918,11 +1920,6 @@ check_target() {
 # Convenience routine to save a little typing
 #------------------------------------------------------------------------------
 encrypt() {  [ "$ENCRYPT" ]; return $?; }
-
-#------------------------------------------------------------------------------
-# Strip out stderr output to make "dd" easier to use with cmd() function
-#------------------------------------------------------------------------------
-quiet_dd() { dd "$@" 2>/dev/null ; }
 
 #------------------------------------------------------------------------------
 # Make sure we have enough left over space on a partition.  Can generate
