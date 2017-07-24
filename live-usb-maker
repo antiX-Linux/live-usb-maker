@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.10.01"
- VERSION_DATE="Mon Jul 17 19:25:01 MDT 2017"
+      VERSION="2.10.02"
+ VERSION_DATE="Mon Jul 24 15:38:19 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -657,6 +657,7 @@ main() {
         # Convert file to phrase to avoid problems with \n
         local phrase=$PASS_PHRASE_TYPE
         case $phrase in
+                  ask)                                            ;;
                file=*) phrase=phrase=$(cat "$val")                ;;
                random) set_rand_phrase   phrase                   ;;
              random=*) set_rand_phrase   phrase ${phrase#*=}      ;;
