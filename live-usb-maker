@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.10.07"
- VERSION_DATE="Tue Aug  1 00:26:46 MDT 2017"
+      VERSION="2.10.08"
+ VERSION_DATE="Tue Aug  1 15:36:54 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -656,7 +656,7 @@ main() {
     need partition-clear && clear_partition "$target_dev"
     need partition-make  && do_partition "$target_dev" "$MSDOS_GPT" "$bios_size" "$main_size" "$uefi_size"
 
-    msg $"Unmount new partitions if needed ..."
+    # msg "Unmount new partitions if needed ..."
 
     sync; sync
     #sleep ${AUTOMOUNT_DELAY:-2}
