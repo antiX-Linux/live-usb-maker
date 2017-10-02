@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.12.07"
- VERSION_DATE="Mon Aug 28 00:33:22 MDT 2017"
+      VERSION="2.12.09"
+ VERSION_DATE="Mon Oct  2 14:37:08 MDT 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -364,7 +364,7 @@ main() {
     trap clean_up EXIT
     do_flock
 
-    rm -f $ERR_FILE
+    test -f $ERR_FILE && rm -f $ERR_FILE
 
     read_all_cmdline_mingled "$@"
     set_colors $COLOR_SCHEME
@@ -411,7 +411,7 @@ main() {
 
     shout_title $"Starting %s" "$ME"
     set_window_title "$ME"
-    start_log "$orig_args" "$CMDS"
+    start_log "$THE_LOG_FILE" "$orig_args"
 
     # NOTE: this placement is not ideal because it allows the user to
     # write an invalid pass_phrase_type to the config file
@@ -700,6 +700,7 @@ main() {
         local phrase=$PASS_PHRASE_TYPE
         case $phrase in
                   ask)                                            ;;
+             phrase=*)                                            ;;
                file=*) phrase=phrase=$(cat "$val")                ;;
                random) set_rand_phrase   phrase                   ;;
              random=*) set_rand_phrase   phrase ${phrase#*=}      ;;
@@ -1317,10 +1318,10 @@ encrypt_partition() {
     if [ -z "$PRETEND_MODE" ]; then
         case $phrase in
                 ask) shout
-                     shout "We want to overwrite the data on %s" $dev
-                     shout "Type in upper-case %s as suggested" "'YES'"
+                     shout $"We want to overwrite the data on %s" $dev
+                     shout $"Type in upper-case %s as suggested" "'YES'"
                      cryptsetup luksFormat              $dev ; ret=$?
-                     shout "You will be asked for the passphrase a third time" ;;
+                     shout $"You will be asked for the passphrase a third time" ;;
 
              file=*) cat "$val"     | cryptsetup luksFormat --key-file - $dev ; ret=$? ;;
 
@@ -1329,21 +1330,21 @@ encrypt_partition() {
                   *) internal_error phrase-type "$phrase"
         esac
 
-        [ $ret -eq 0 ] || fatal "Failed to create encrypted device"
+        [ $ret -eq 0 ] || fatal $"Failed to create encrypted device"
     fi
 
     case $phrase in
            ask) cryptsetup open --type luks                   $dev $name; ret=$? ;;
         file=*) cryptsetup open --type luks --key-file "$val" $dev $name; ret=$? ;;
 
-      phrase=*) if YES_no "Do you want to try entering the new passphrase now?"; then
+      phrase=*) if YES_no $"Do you want to try entering the new passphrase now?"; then
                     cryptsetup open --type luks $dev $name; ret=$?
                 else
                     echo -n "$val" | cryptsetup open --type luks --key-file - $dev $name; ret=$?
                 fi ;;
     esac
 
-    [ $ret -eq 0 ] || fatal "Failed to open encrypted device"
+    [ $ret -eq 0 ] || fatal $"Failed to open encrypted device"
 
     LUKS_DEV=/dev/mapper/$name
     msg $"Encryption successful"
@@ -1732,7 +1733,7 @@ fix_uefi_memtest() {
     local dir=$1/EFI/BOOT
     test -d "$dir" || dir=$1/efi/boot
     test -d "$dir" || return
-    msg "Fix %sbug" 'uefi memtest'
+    msg $"Fix %s bug" 'Dell uefi memtest'
     local fallback=$dir/fallback.efi
     local grubx64=$dir/grubx64.efi
 
@@ -2027,27 +2028,6 @@ my_exit() {
 
     # Msg "=> cleaning up"
     exit $ret
-}
-
-#------------------------------------------------------------------------------
-# Start logging by appending a simple header
-#------------------------------------------------------------------------------
-start_log() {
-    local args=$1 cmds=${2# }
-
-    LOG_FILE=$THE_LOG_FILE
-
-    cat <<Start_Log >> $LOG_FILE
----------------------------------------------------------------------
-$0
-        started: $(date)
-        version: $VERSION ($VERSION_DATE)
-    comand line: $args
-      found lib: $FOUND_LIB
-     TEXTDOMAIN: $TEXTDOMAIN
-  TEXTDOMAINDIR: $TEXTDOMAINDIR
-
-Start_Log
 }
 
 #------------------------------------------------------------------------------
