@@ -8,8 +8,8 @@
 # License: GPLv3 or later
 #==============================================================================
 
-      VERSION="2.12.11"
- VERSION_DATE="Thu Oct 12 19:48:56 MDT 2017"
+      VERSION="2.12.12"
+ VERSION_DATE="Thu Dec 21 08:27:13 MST 2017"
 
         ME=${0##*/}
     MY_DIR=$(dirname "$(readlink -f $0)")
@@ -467,7 +467,7 @@ main() {
     else
         check_target "$TARGET" "$live_dev"
     fi
-    msg $"Will use target device %s" "$(pq $TARGET)"
+    msg $"Will use target device %s" "$(pq "$TARGET ($(device_info $TARGET))")"
 
     [ ${#CMD_CMDS} -eq 0  ] && ! q_mode simple gui && select_overall_mode CMDS QUESTION_MODE
 
@@ -1088,7 +1088,8 @@ select_target_device() {
     case $cnt in
         0) fatal $"No available target usb devices were found" ;;
         1) dev=$(echo "$menu" | cut -d"$P_IFS" -f1 | head -n1)
-            Msg $"Only one target usb device was found %s" "$(echo $(echo "$menu" | cut -d"$P_IFS" -f2))"
+            #Msg $"Only one target usb device was found %s" "$(echo $(echo "$menu" | cut -d"$P_IFS" -f2))"
+            Msg $"Only one target usb device was found %s" "$(pq $dev)"
            eval $var=\$dev
            return ;;
     esac
@@ -1469,16 +1470,16 @@ clear_partition() {
     local total=$(parted --script $dev unit KiB print 2>/dev/null | sed -rn "s/^Disk.*: ([0-9]+)kiB$/\1/ip")
 
     # Clear out previous primary partition table
-    cmd dd status=none if=/dev/zero of=$dev bs=1K count=17
+    cmd_dd if=/dev/zero of=$dev bs=1K count=17
 
     # Clear out sneaky iso-hybrid partition table
-    cmd dd status=none if=/dev/zero of=$dev bs=1K count=17 seek=32
+    cmd_dd if=/dev/zero of=$dev bs=1K count=17 seek=32
 
     [ -n "$total" ] || return
     local offset=$((total - 17))
 
     # Clear out secondary gpt partition table
-    cmd dd status=none conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
+    cmd_dd conv=notrunc if=/dev/zero of=$dev bs=1K count=17 seek=$offset
 
     # Tell kernel the partition table has changed
     cmd partprobe $dev
@@ -1542,7 +1543,7 @@ do_partition() {
 clear_filesystem() {
     local dev=$1  offset_m=$2  size=128
     local offset_k=$((offset_m * 1024))
-    cmd dd status=none if=/dev/zero of=$dev seek=$offset_k bs=1K count=$size
+    cmd_dd if=/dev/zero of=$dev seek=$offset_k bs=1K count=$size
     sync
 }
 
@@ -1873,7 +1874,7 @@ do_install_bootloader() {
     done
 
     [ "$file" ] || fatal "Could not find file %s" "$fname"
-    cmd dd status=none bs=440 conv=notrunc count=1 if=$file of=$dev  || fatal "%s command failed" dd
+    cmd_dd bs=440 conv=notrunc count=1 if=$file of=$dev
 
     local sdir idir syslinux_dir isolinux_dir
     for sdir in boot/syslinux syslinux; do
@@ -1954,7 +1955,7 @@ do_made_by() {
 #------------------------------------------------------------------------------
 write_random_seed() {
     local file=$1
-    cmd dd status=none if=/dev/urandom of=$file bs=512 count=1
+    cmd_dd if=/dev/urandom of=$file bs=512 count=1
     cmd chmod 600 $file
 }
 
